@@ -449,7 +449,7 @@ FString UGenActorUtils::CreateGameModeWithPawn(const FString& GameModePath, cons
         UE_LOG(LogTemp, Error, TEXT("Generated class not found for %s"), *GameModePath);
         return TEXT("{\"success\": false, \"error\": \"No generated class\"}");
     }
-    if (AGameModeBase* GameModeCDO = Cast<AGameModeBase>(GameModeClass->ClassDefaultObject))
+    if (AGameModeBase* GameModeCDO = GetMutableDefault<AGameModeBase>(GameModeClass))
     {
         GameModeCDO->DefaultPawnClass = PawnBP->GeneratedClass;
     }
