@@ -131,26 +131,27 @@ def handshake_test(message: str) -> str:
 def execute_python_script(script: str) -> str:
     """
     Execute a Python script within Unreal Engine's Python interpreter.
-    
+
+    THIS IS A REMOTE SHELL INTO THE EDITOR. The script runs with full
+    `import unreal` access — it can delete assets, modify Blueprints, save
+    files, run console commands, and otherwise do anything the editor
+    process can do. There are no in-tool safety checks; rely on version
+    control and snapshot tags for rollback (see knowledge_base/how_to_use.md).
+
     Args:
         script: A string containing the Python code to execute in Unreal Engine.
-        
+
     Returns:
-        Message indicating success, failure, or a request for confirmation.
-        
+        Message indicating success or failure with stdout output.
+
     Note:
-        This tool sends the script to Unreal Engine, where it is executed via a temporary file using Unreal's internal
-        Python execution system (similar to GEngine->Exec). This method is stable but may not handle Blueprint-specific
-        APIs as seamlessly as direct Python API calls. For Blueprint manipulation, consider using dedicated tools like
-        `add_node_to_blueprint` or ensuring the script uses stable `unreal` module functions. Use this tool for Python
-        script execution instead of `execute_unreal_command` with 'py' commands.
+        For Blueprint manipulation, prefer the dedicated tools (`add_node_to_blueprint`,
+        `connect_blueprint_nodes`, etc.) — they're easier for an LLM to drive correctly.
+        Use this tool for anything those don't cover, or when you need stdlib + unreal
+        module access. Do not use `execute_unreal_command` with 'py' commands; use this
+        tool instead.
     """
     try:
-        if is_potentially_destructive(script):
-            return ("This script appears to involve potentially destructive actions (e.g., deleting or saving files) "
-                    "that were not explicitly requested. Please confirm if you want to proceed by saying 'Yes, execute it' "
-                    "or modify your request to explicitly allow such actions.")
-
         command = {
             "type": "execute_python",
             "script": script
@@ -188,17 +189,11 @@ def execute_unreal_command(command: str) -> str:
         output, consider wrapping the command in a Python script with `execute_python_script`.
     """
     try:
-        # Check if the command is attempting to run a Python script
+        # Reject 'py ...' — that path doesn't capture stdout properly; use execute_python_script instead.
         if command.strip().lower().startswith("py "):
             return (
                 "Error: Use `execute_python_script` to run Python scripts instead of `execute_unreal_command` with 'py' commands. "
                 "For example, use `execute_python_script(script='your_code_here')` for Python execution.")
-
-        # Check for potentially destructive commands
-        destructive_keywords = ["delete", "save", "quit", "exit", "restart"]
-        if any(keyword in command.lower() for keyword in destructive_keywords):
-            return ("This command appears to involve potentially destructive actions (e.g., deleting or saving). "
-                    "Please confirm by saying 'Yes, execute it' or explicitly request such actions.")
 
         command_dict = {
             "type": "execute_unreal_command",
@@ -295,27 +290,13 @@ def edit_component_property(blueprint_path: str, component_name: str, property_n
     }
     response = send_to_unreal(command)
 
-    # CHANGED: Improved response handling to support both string and dict responses
-    try:
-        # Handle case where response is already a dict
-        if isinstance(response, dict):
-            result = response
-        # Handle case where response is a string
-        elif isinstance(response, str):
-            import json
-            result = json.loads(response)
-        else:
-            return f"Error: Unexpected response type: {type(response)}"
+    if response.get("success"):
+        return response.get("message", f"Set {property_name} of {component_name} to {value}")
 
-        if result.get("success"):
-            return result.get("message", f"Set {property_name} of {component_name} to {value}")
-        else:
-            error = result.get("error", "Unknown error")
-            if "suggestions" in result:
-                error += f"\nSuggestions: {result['suggestions']}"
-            return f"Failed: {error}"
-    except Exception as e:
-        return f"Error: {str(e)}\nRaw response: {response}"
+    error = response.get("error", "Unknown error")
+    if "suggestions" in response:
+        error += f"\nSuggestions: {response['suggestions']}"
+    return f"Failed: {error}"
 
 
 @mcp.tool()
@@ -799,19 +780,15 @@ def add_component_with_events(blueprint_path: str, component_name: str, componen
         "component_class": component_class
     }
     response = send_to_unreal(command)
-    try:
-        import json
-        result = json.loads(response)
-        if result.get("success"):
-            msg = result.get("message", f"Added component {component_name}")
-            if "events" in result:
-                events = json.loads(result["events"])
-                if events["begin_guid"] or events["end_guid"]:
-                    msg += f"\nOverlap Events - Begin GUID: {events['begin_guid']}, End GUID: {events['end_guid']}"
-            return msg
-        return f"Failed: {result.get('error', 'Unknown error')}"
-    except Exception as e:
-        return f"Error parsing response: {str(e)}\nRaw response: {response}"
+    if not response.get("success"):
+        return f"Failed: {response.get('error', 'Unknown error')}"
+
+    msg = response.get("message", f"Added component {component_name}")
+    begin_guid = response.get("begin_overlap_guid")
+    end_guid = response.get("end_overlap_guid")
+    if begin_guid or end_guid:
+        msg += f"\nOverlap Events - Begin GUID: {begin_guid}, End GUID: {end_guid}"
+    return msg
 
 
 @mcp.tool()
@@ -899,27 +876,6 @@ def get_blueprint_node_guid(blueprint_path: str, graph_type: str = "EventGraph",
         return f"Failed to get node GUID: {response.get('error', 'Unknown error')}"
 
 
-# Safety check for potentially destructive actions
-def is_potentially_destructive(script: str) -> bool:
-    """
-    Check if the script contains potentially destructive actions like deleting or saving files.
-    Returns True if such actions are detected and not explicitly requested.
-    """
-    destructive_keywords = [
-        r'unreal\.EditorAssetLibrary\.delete_asset',
-        r'unreal\.EditorLevelLibrary\.destroy_actor',
-        r'unreal\.save_package',
-        r'os\.remove',
-        r'shutil\.rmtree',
-        r'file\.write',
-        r'unreal\.EditorAssetLibrary\.save_asset'
-    ]
-    for keyword in destructive_keywords:
-        if re.search(keyword, script, re.IGNORECASE):
-            return True
-    return False
-
-
 # Scene Control
 @mcp.tool()
 def get_all_scene_objects() -> str:
@@ -969,18 +925,16 @@ def create_game_mode(game_mode_path: str, pawn_blueprint_path: str, base_class: 
         pawn_blueprint_path: Path to pawn Blueprint (e.g., "/Game/Blueprints/BP_Player")
         base_class: Base class for game mode (default: "GameModeBase")
     """
-    try:
-        command = {
-            "type": "create_game_mode",
-            "game_mode_path": game_mode_path,
-            "pawn_blueprint_path": pawn_blueprint_path,
-            "base_class": base_class
-        }
-        response = send_to_unreal(command)
-        parsed = json.loads(response)
-        return parsed.get("message", f"Failed: {parsed.get('error')}")
-    except Exception as e:
-        return f"Error creating game mode: {str(e)}"
+    command = {
+        "type": "create_game_mode",
+        "game_mode_path": game_mode_path,
+        "pawn_blueprint_path": pawn_blueprint_path,
+        "base_class": base_class,
+    }
+    response = send_to_unreal(command)
+    if response.get("success"):
+        return response.get("message", f"Created game mode at {game_mode_path}")
+    return f"Failed: {response.get('error', 'Unknown error')}"
 
 
 @mcp.tool()
@@ -1005,24 +959,15 @@ def add_widget_to_user_widget(user_widget_path: str, widget_type: str, widget_na
         "widget_name": widget_name,
         "parent_widget_name": parent_widget_name
     }
-    # Use json.loads to parse the JSON string returned by send_to_unreal
-    response_str = send_to_unreal(command)
-    try:
-        response_dict = json.loads(response_str)
-        # Return a user-friendly string summary
-        if response_dict.get("success"):
-            actual_name = response_dict.get("widget_name", widget_name)
-            return response_dict.get("message",
-                                     f"Successfully added widget '{actual_name}' of type '{widget_type}' to '{user_widget_path}'.")
-        else:
-            return f"Failed to add widget: {response_dict.get('error', 'Unknown C++ error')}"
-    except json.JSONDecodeError:
-        return f"Failed to parse response from Unreal: {response_str}"
-    except Exception as e:
-        # Catch potential errors if send_to_unreal itself failed before returning JSON
-        if isinstance(response_str, dict) and not response_str.get("success"):
-            return f"Failed to send command: {response_str.get('error', 'Unknown MCP error')}"
-        return f"An unexpected error occurred: {str(e)} Response: {response_str}"
+    response = send_to_unreal(command)
+    if not response.get("success"):
+        return f"Failed to add widget: {response.get('error', 'Unknown error')}"
+
+    actual_name = response.get("widget_name", widget_name)
+    return response.get(
+        "message",
+        f"Successfully added widget '{actual_name}' of type '{widget_type}' to '{user_widget_path}'.",
+    )
 
 
 @mcp.tool()
@@ -1057,23 +1002,14 @@ def edit_widget_property(user_widget_path: str, widget_name: str, property_name:
         "property_name": property_name,
         "value": value  # Pass the string value directly
     }
-    # Use json.loads to parse the JSON string returned by send_to_unreal
-    response_str = send_to_unreal(command)
-    try:
-        response_dict = json.loads(response_str)
-        # Return a user-friendly string summary
-        if response_dict.get("success"):
-            return response_dict.get("message",
-                                     f"Successfully set property '{property_name}' on widget '{widget_name}'.")
-        else:
-            return f"Failed to edit widget property: {response_dict.get('error', 'Unknown C++ error')}"
-    except json.JSONDecodeError:
-        return f"Failed to parse response from Unreal: {response_str}"
-    except Exception as e:
-        # Catch potential errors if send_to_unreal itself failed before returning JSON
-        if isinstance(response_str, dict) and not response_str.get("success"):
-            return f"Failed to send command: {response_str.get('error', 'Unknown MCP error')}"
-        return f"An unexpected error occurred: {str(e)} Response: {response_str}"
+    response = send_to_unreal(command)
+    if not response.get("success"):
+        return f"Failed to edit widget property: {response.get('error', 'Unknown error')}"
+
+    return response.get(
+        "message",
+        f"Successfully set property '{property_name}' on widget '{widget_name}'.",
+    )
 
 
 # Input
