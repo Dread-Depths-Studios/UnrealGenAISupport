@@ -2,12 +2,9 @@ import socket
 import json
 import sys
 import os
-from mcp.server.fastmcp import FastMCP
 import re
-import mss
+import time
 import base64
-import tempfile # For creating a secure temporary file
-from io import BytesIO
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Image
 
@@ -379,40 +376,36 @@ def create_blueprint(blueprint_name: str, parent_class: str = "Actor", save_path
 @mcp.tool()
 def take_editor_screenshot() -> Image:
     """
-    Takes a screenshot of the primary monitor using a vendored OS-level library.
-    This is a robust method that requires no installation and bypasses the Unreal API.
+    Takes a screenshot of the active UE5 editor viewport via HighResShot.
+    HighResShot is async; the in-editor handler returns immediately with a
+    file path, and we poll for the file from outside the game thread.
     """
-    temp_path = "" # Ensure path is in scope for the finally block
-    try:
-        # 1. Create a secure, temporary file path with a .png extension.
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as fp:
-            temp_path = fp.name
+    response = send_to_unreal({"type": "take_screenshot"})
+    if not response.get("success"):
+        return f"Screenshot failed: {response.get('error', 'unknown error')}"
 
-        # 2. Use the simplest 'shot' method from mss to save the screenshot to the temp file.
-        with mss.mss() as sct:
-            sct.shot(mon=1, output=temp_path)
+    expected_path = response.get("expected_path")
+    if not expected_path:
+        return "Screenshot tool did not return a file path."
 
-        # 3. Read the created temporary file in binary mode to get the raw bytes.
-        with open(temp_path, "rb") as image_file:
-            image_bytes = image_file.read()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if os.path.exists(expected_path):
+            try:
+                with open(expected_path, "rb") as f:
+                    image_bytes = f.read()
+            except OSError:
+                time.sleep(0.1)
+                continue
+            if image_bytes:
+                try:
+                    os.remove(expected_path)
+                except OSError:
+                    pass
+                return Image(data=image_bytes, format="png")
+        time.sleep(0.1)
 
-        # 4. Return the Image object directly with the raw bytes.
-        #    The FastMCP library handles the encoding internally.
-        return Image(
-            data=image_bytes,
-            format="png"
-        )
-
-    except Exception as e:
-        error_message = f"OS-level screenshot failed: {str(e)}"
-        print(error_message)
-        # Return the error as text if something goes wrong.
-        return error_message
-
-    finally:
-        # 5. Clean up by deleting the temporary file.
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+    return f"Screenshot timed out — file did not appear at {expected_path} within 10s"
 
 
 @mcp.tool()
