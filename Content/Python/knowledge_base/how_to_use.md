@@ -88,6 +88,41 @@ Default targets material slot 0.
 - Level viewport must be the foregrounded rendering target (see "Operational patterns" above).
 - Issued asynchronously — file appears on the next render tick. If you call it as the last command in a sequence, queue a follow-up command to drive the tick.
 
+### EventGraph addressing (important — easy to miss)
+
+Tools that take a `function_id` argument (`add_node_to_blueprint`,
+`add_nodes_to_blueprint_bulk`, `connect_blueprint_nodes`,
+`connect_blueprint_nodes_bulk`, `get_all_nodes_in_graph`) **also accept the
+literal string `"EventGraph"`** to address the Blueprint's event graph
+instead of a function graph's GUID.
+
+So to wire a bound overlap event to call your function:
+1. Find the bound event's GUID — it's returned by `add_component_with_events`,
+   or use `get_blueprint_outline` to enumerate event-graph nodes.
+2. Use `add_call_function_node` (see below) with `graph_identifier="EventGraph"`
+   to add a node that calls your custom function.
+3. `connect_blueprint_nodes(function_id="EventGraph", source_node_id=<event_guid>,
+   source_pin="then", target_node_id=<call_node_guid>, target_pin="execute")`.
+
+### Calling a Blueprint's own functions
+
+`add_node_to_blueprint` only resolves library functions (`KismetMathLibrary`,
+`GameplayStatics`, etc.) — it can't find a function you just created on the
+Blueprint itself with `add_function_to_blueprint`. Use `add_call_function_node`
+instead. It looks up the function on `Blueprint->GeneratedClass` and calls
+`SetFromFunction` so the node compiles cleanly.
+
+```
+add_call_function_node(
+    blueprint_path="/Game/Test/BP_OverlapDemo",
+    graph_identifier="EventGraph",
+    target_function_name="OnTrigger",
+    node_x=400, node_y=0
+)
+```
+Response includes the node GUID and the function's input/output pins so you
+can immediately wire connections.
+
 ### Bulk node operations
 `add_nodes_to_blueprint_bulk` adds N nodes in a single round-trip. Each node entry needs:
 - `id`: your reference ID (string) — used to map to actual GUIDs in the response
@@ -173,7 +208,8 @@ The old APIs still work in 5.7 with deprecation warnings; prefer the new ones in
 
 ### Blueprints — nodes
 
-- **`add_node_to_blueprint(blueprint_path, function_id, node_type, node_position=[0,0], node_properties={})`** — adds one node to a function graph.
+- **`add_node_to_blueprint(blueprint_path, function_id, node_type, node_position=[0,0], node_properties={})`** — adds one node to a function graph. Pass `function_id="EventGraph"` (literal) to target the event graph. Resolves library functions (KismetMathLibrary, GameplayStatics, …); for the Blueprint's own functions use `add_call_function_node`.
+- **`add_call_function_node(blueprint_path, graph_identifier, target_function_name, node_x, node_y)`** — adds a `K2Node_CallFunction` that targets a function on the Blueprint itself or any parent class. Returns node GUID + pin layout. Use after `add_function_to_blueprint` to wire your custom function into a graph.
 - **`add_nodes_to_blueprint_bulk(blueprint_path, function_id, nodes)`** — adds N nodes in a single round-trip. See "Bulk node operations" gotcha above.
 - **`delete_node_from_blueprint(blueprint_path, function_id, node_id)`** — removes a node by GUID.
 - **`get_all_nodes_in_graph(blueprint_path, function_id)`** — returns JSON of all nodes (GUID, type, position). Read-only.

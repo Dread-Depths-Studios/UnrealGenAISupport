@@ -1057,6 +1057,50 @@ def list_actors_by_class(class_name: str) -> str:
 
 
 @mcp.tool()
+def add_call_function_node(blueprint_path: str, graph_identifier: str,
+                           target_function_name: str,
+                           node_x: float = 0.0, node_y: float = 0.0) -> str:
+    """
+    Add a K2Node_CallFunction node that calls one of the Blueprint's OWN
+    custom functions (or an inherited parent function). Use this when you've
+    created a function via `add_function_to_blueprint` and want to call it
+    from the EventGraph or another graph.
+
+    `add_node_to_blueprint` cannot resolve self-function names (it only
+    searches a fixed list of library classes like KismetMathLibrary), so
+    this tool fills that gap by looking up the function on the Blueprint's
+    GeneratedClass and calling SetFromFunction directly.
+
+    Args:
+        blueprint_path: Path to the Blueprint asset.
+        graph_identifier: "EventGraph" (literal) for the event graph, or a
+                          function graph's GUID (from add_function_to_blueprint).
+        target_function_name: Name of the function to call (e.g. "OnTrigger").
+        node_x, node_y: Position in the graph.
+
+    Returns:
+        JSON with node_guid, function_name, input_pins, output_pins. Use the
+        node_guid with connect_blueprint_nodes to wire exec/data flow.
+    """
+    response = send_to_unreal({
+        "type": "add_call_function_node",
+        "blueprint_path": blueprint_path,
+        "graph_identifier": graph_identifier,
+        "target_function_name": target_function_name,
+        "node_x": node_x,
+        "node_y": node_y,
+    })
+    if not response.get("success"):
+        return f"Failed to add call-function node: {response.get('error', 'Unknown error')}"
+    return json.dumps({
+        "node_guid": response.get("node_guid"),
+        "function_name": response.get("function_name"),
+        "input_pins": response.get("input_pins", []),
+        "output_pins": response.get("output_pins", []),
+    }, indent=2)
+
+
+@mcp.tool()
 def get_node_pins(blueprint_path: str, node_id: str) -> str:
     """
     Return input and output pins on a specific Blueprint node.

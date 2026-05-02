@@ -646,6 +646,35 @@ def handle_get_blueprint_outline(command: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+def handle_add_call_function_node(command: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add a K2Node_CallFunction targeting one of the Blueprint's own custom
+    functions (or an inherited function on a parent class). Solves the gap
+    where add_node_to_blueprint can't resolve self-function names.
+
+    GraphIdentifier accepts "EventGraph" (literal) or a function graph's GUID,
+    matching the convention used by add_node_to_blueprint and connect_blueprint_nodes.
+    """
+    try:
+        blueprint_path = command.get("blueprint_path", "")
+        graph_identifier = command.get("graph_identifier", "EventGraph")
+        target_function = command.get("target_function_name", "")
+        node_x = float(command.get("node_x", 0.0))
+        node_y = float(command.get("node_y", 0.0))
+
+        if not blueprint_path or not target_function:
+            return {"success": False, "error": "Missing blueprint_path or target_function_name"}
+
+        result_json = unreal.GenBlueprintNodeCreator.add_call_function_node(
+            blueprint_path, graph_identifier, target_function, node_x, node_y
+        )
+        return json.loads(result_json)
+
+    except Exception as e:
+        log.log_error(f"Error in add_call_function_node: {str(e)}", include_traceback=True)
+        return {"success": False, "error": str(e)}
+
+
 def handle_get_node_pins(command: Dict[str, Any]) -> Dict[str, Any]:
     """
     Return input/output pins on a specific node by GUID. Delegates to the

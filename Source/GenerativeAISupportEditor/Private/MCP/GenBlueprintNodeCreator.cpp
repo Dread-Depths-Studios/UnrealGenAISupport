@@ -1087,3 +1087,85 @@ FString UGenBlueprintNodeCreator::GetNodeSuggestions(const FString& NodeType)
 	return TEXT("SUGGESTIONS:") + SuggestionStr;
 }
 
+FString UGenBlueprintNodeCreator::AddCallFunctionNode(const FString& BlueprintPath,
+                                                     const FString& GraphIdentifier,
+                                                     const FString& TargetFunctionName,
+                                                     float NodeX, float NodeY)
+{
+	UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
+	if (!Blueprint)
+	{
+		return FString::Printf(TEXT("{\"success\": false, \"error\": \"Could not load blueprint %s\"}"), *BlueprintPath);
+	}
+
+	UEdGraph* Graph = GetGraphFromFunctionId(Blueprint, GraphIdentifier);
+	if (!Graph)
+	{
+		return FString::Printf(TEXT("{\"success\": false, \"error\": \"Could not find graph %s\"}"), *GraphIdentifier);
+	}
+
+	UClass* SearchClass = Blueprint->GeneratedClass;
+	if (!SearchClass)
+	{
+		// SkeletonGeneratedClass is up-to-date even before a full compile.
+		SearchClass = Blueprint->SkeletonGeneratedClass;
+	}
+	if (!SearchClass)
+	{
+		return TEXT("{\"success\": false, \"error\": \"Blueprint has no generated class — compile it first\"}");
+	}
+
+	UFunction* TargetFunction = SearchClass->FindFunctionByName(FName(*TargetFunctionName));
+	if (!TargetFunction)
+	{
+		// Walk the inheritance chain in case it's on a parent class.
+		for (UClass* C = SearchClass->GetSuperClass(); C && !TargetFunction; C = C->GetSuperClass())
+		{
+			TargetFunction = C->FindFunctionByName(FName(*TargetFunctionName));
+		}
+	}
+	if (!TargetFunction)
+	{
+		return FString::Printf(TEXT("{\"success\": false, \"error\": \"Function %s not found on %s or its parents\"}"),
+			*TargetFunctionName, *SearchClass->GetName());
+	}
+
+	UK2Node_CallFunction* CallNode = NewObject<UK2Node_CallFunction>(Graph);
+	CallNode->SetFromFunction(TargetFunction);
+	CallNode->NodePosX = NodeX;
+	CallNode->NodePosY = NodeY;
+	CallNode->AllocateDefaultPins();
+	if (!CallNode->NodeGuid.IsValid())
+	{
+		CallNode->NodeGuid = FGuid::NewGuid();
+	}
+	Graph->AddNode(CallNode, false, false);
+
+	Blueprint->Modify();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	TArray<TSharedPtr<FJsonValue>> InputPins;
+	TArray<TSharedPtr<FJsonValue>> OutputPins;
+	for (UEdGraphPin* Pin : CallNode->Pins)
+	{
+		if (!Pin) continue;
+		TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+		P->SetStringField(TEXT("name"), Pin->PinName.ToString());
+		P->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+		if (Pin->Direction == EGPD_Input) InputPins.Add(MakeShared<FJsonValueObject>(P));
+		else OutputPins.Add(MakeShared<FJsonValueObject>(P));
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetBoolField(TEXT("success"), true);
+	Root->SetStringField(TEXT("node_guid"), CallNode->NodeGuid.ToString());
+	Root->SetStringField(TEXT("function_name"), TargetFunctionName);
+	Root->SetArrayField(TEXT("input_pins"), InputPins);
+	Root->SetArrayField(TEXT("output_pins"), OutputPins);
+
+	FString Output;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+	FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+	return Output;
+}
+

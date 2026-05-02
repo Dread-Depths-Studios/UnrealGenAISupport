@@ -38,7 +38,22 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Blueprint")
 	static FString GetNodeSuggestions(const FString& NodeType);
-	
+
+	/**
+	 * Add a K2Node_CallFunction targeting a function on the Blueprint itself
+	 * (i.e. one of the Blueprint's own custom functions, not a library call).
+	 *
+	 * The existing AddNode tool only searches a fixed set of common libraries
+	 * (KismetMathLibrary, GameplayStatics, etc.) and can't resolve self-function
+	 * names. This explicitly looks up the function on Blueprint->GeneratedClass
+	 * and calls SetFromFunction so the node compiles cleanly.
+	 *
+	 * GraphIdentifier accepts either "EventGraph" (literal) or a function
+	 * graph's GUID — same convention as AddNode/ConnectNodes.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Generative AI|Blueprint Nodes")
+	static FString AddCallFunctionNode(const FString& BlueprintPath, const FString& GraphIdentifier,
+	                                   const FString& TargetFunctionName, float NodeX, float NodeY);
 
 
 private:

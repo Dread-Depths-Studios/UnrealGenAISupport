@@ -75,6 +75,9 @@ class CommandDispatcher:
             "get_blueprint_outline": blueprint_commands.handle_get_blueprint_outline,
             "get_node_pins": blueprint_commands.handle_get_node_pins,
             "list_actors_by_class": actor_commands.handle_list_actors_by_class,
+
+            # --- Self-function call node (mutating; wraps in transaction) ---
+            "add_call_function_node": blueprint_commands.handle_add_call_function_node,
         }
 
     # Commands that don't mutate editor state — skip transaction wrapping so
