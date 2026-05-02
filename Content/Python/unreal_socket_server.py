@@ -72,15 +72,38 @@ class CommandDispatcher:
             "edit_widget_property": ui_commands.handle_edit_widget_property,
         }
 
+    # Commands that don't mutate editor state — skip transaction wrapping so
+    # they don't pollute the undo history with empty entries.
+    READ_ONLY_COMMANDS = frozenset({
+        "handshake",
+        "get_all_scene_objects",
+        "get_files_in_folder",
+        "get_all_nodes",
+        "get_node_suggestions",
+        "get_node_guid",
+        "take_screenshot",  # writes a temp file but doesn't mutate editor state
+    })
+
     def dispatch(self, command: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch command to appropriate handler"""
         command_type = command.get("type")
         if command_type not in self.handlers:
             return {"success": False, "error": f"Unknown command type: {command_type}"}
 
+        handler = self.handlers[command_type]
+
+        # Read-only commands run as-is. Mutating commands run inside an editor
+        # transaction so a single Ctrl+Z reverses the whole operation.
+        if command_type in self.READ_ONLY_COMMANDS:
+            try:
+                return handler(command)
+            except Exception as e:
+                log.log_error(f"Error processing command: {str(e)}")
+                return {"success": False, "error": str(e)}
+
         try:
-            handler = self.handlers[command_type]
-            return handler(command)
+            with unreal.ScopedEditorTransaction(f"MCP: {command_type}"):
+                return handler(command)
         except Exception as e:
             log.log_error(f"Error processing command: {str(e)}")
             return {"success": False, "error": str(e)}

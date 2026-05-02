@@ -1115,7 +1115,7 @@ FString UGenBlueprintUtils::AddComponentWithEvents(const FString& BlueprintPath,
     }
     SCS->AddNode(NewComponentNode);
 
-    // Ensure it’s a shape component and enable overlap events
+    // Ensure it's a shape component and enable overlap events
     UShapeComponent* ShapeComp = Cast<UShapeComponent>(NewComponentNode->ComponentTemplate);
     if (!ShapeComp)
     {
@@ -1123,6 +1123,22 @@ FString UGenBlueprintUtils::AddComponentWithEvents(const FString& BlueprintPath,
         return TEXT("{\"success\": false, \"error\": \"Invalid shape component template\", \"begin_overlap_guid\": \"\", \"end_overlap_guid\": \"\"}");
     }
     ShapeComp->SetGenerateOverlapEvents(true);
+
+    // Compile now so the new SCS node materializes as an FObjectProperty on
+    // GeneratedClass — without this, K2Node_ComponentBoundEvent can't resolve
+    // the component reference and the BP compiles with
+    // "None (<ComponentName>) does not have a valid matching component!"
+    Blueprint->Modify();
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    FObjectProperty* ComponentProperty = FindFProperty<FObjectProperty>(
+        Blueprint->GeneratedClass, FName(*ComponentName));
+    if (!ComponentProperty)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Component property %s not found on GeneratedClass after compile"), *ComponentName);
+        return TEXT("{\"success\": false, \"error\": \"Component property not registered after compile\", \"begin_overlap_guid\": \"\", \"end_overlap_guid\": \"\"}");
+    }
 
     // Get or create the Event Graph
     UEdGraph* EventGraph = Blueprint->UbergraphPages.Num() > 0 ? Blueprint->UbergraphPages[0] : nullptr;
@@ -1143,8 +1159,7 @@ FString UGenBlueprintUtils::AddComponentWithEvents(const FString& BlueprintPath,
     }
 
     UK2Node_ComponentBoundEvent* BeginOverlapEvent = NewObject<UK2Node_ComponentBoundEvent>(EventGraph);
-    BeginOverlapEvent->ComponentPropertyName = FName(*ComponentName);
-    BeginOverlapEvent->InitializeComponentBoundEventParams(nullptr, BeginOverlapDelegate);
+    BeginOverlapEvent->InitializeComponentBoundEventParams(ComponentProperty, BeginOverlapDelegate);
     BeginOverlapEvent->NodePosX = 0;
     BeginOverlapEvent->NodePosY = EventGraph->Nodes.Num() * 200;
     BeginOverlapEvent->AllocateDefaultPins();
@@ -1165,8 +1180,7 @@ FString UGenBlueprintUtils::AddComponentWithEvents(const FString& BlueprintPath,
     }
 
     UK2Node_ComponentBoundEvent* EndOverlapEvent = NewObject<UK2Node_ComponentBoundEvent>(EventGraph);
-    EndOverlapEvent->ComponentPropertyName = FName(*ComponentName);
-    EndOverlapEvent->InitializeComponentBoundEventParams(nullptr, EndOverlapDelegate);
+    EndOverlapEvent->InitializeComponentBoundEventParams(ComponentProperty, EndOverlapDelegate);
     EndOverlapEvent->NodePosX = 300; // Offset horizontally
     EndOverlapEvent->NodePosY = EventGraph->Nodes.Num() * 200;
     EndOverlapEvent->AllocateDefaultPins();
