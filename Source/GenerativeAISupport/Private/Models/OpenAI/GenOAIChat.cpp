@@ -57,8 +57,9 @@ void UGenOAIChat::Cancel()
 TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> UGenOAIChat::MakeRequest(const FGenChatSettings& ChatSettings,
                               const TFunction<void(const FString&, const FString&, bool)>& ResponseCallback)
 {
+	const bool bUsingCustomEndpoint = !ChatSettings.CustomEndpoint.IsEmpty();
 	const FString ApiKey = UGenSecureKey::GetGenerativeAIApiKey(EGenAIOrgs::OpenAI);
-	if (ApiKey.IsEmpty())
+	if (ApiKey.IsEmpty() && !bUsingCustomEndpoint)
 	{
 		ResponseCallback(TEXT(""), TEXT("API key not set"), false);
 		return nullptr;
@@ -70,7 +71,10 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> UGenOAIChat::MakeRequest(const FGe
 
 	const TSharedPtr<FJsonObject> JsonPayload = MakeShareable(new FJsonObject());
 	JsonPayload->SetStringField(TEXT("model"), MutableSettings.Model);
-	JsonPayload->SetNumberField(TEXT("max_completion_tokens"), MutableSettings.MaxTokens);
+	// llama.cpp and other local servers use "max_tokens"; OpenAI uses "max_completion_tokens"
+	JsonPayload->SetNumberField(
+		bUsingCustomEndpoint ? TEXT("max_tokens") : TEXT("max_completion_tokens"),
+		MutableSettings.MaxTokens);
 	JsonPayload->SetNumberField(TEXT("temperature"), MutableSettings.Temperature);
 	JsonPayload->SetNumberField(TEXT("top_p"), MutableSettings.TopP);
 	if (!MutableSettings.Stop.IsEmpty())
@@ -104,23 +108,38 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> UGenOAIChat::MakeRequest(const FGe
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PayloadString);
 	FJsonSerializer::Serialize(JsonPayload.ToSharedRef(), Writer);
 
+	const FString Endpoint = bUsingCustomEndpoint
+		? MutableSettings.CustomEndpoint
+		: TEXT("https://api.openai.com/v1/chat/completions");
+
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
 	HttpRequest->SetVerb(TEXT("POST"));
-	HttpRequest->SetURL(TEXT("https://api.openai.com/v1/chat/completions"));
+	HttpRequest->SetURL(Endpoint);
 	HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-	HttpRequest->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *ApiKey));
+	// Use custom API key if provided, otherwise fall back to stored OpenAI key
+	const FString& EffectiveApiKey = !ChatSettings.CustomApiKey.IsEmpty() ? ChatSettings.CustomApiKey : ApiKey;
+	if (!EffectiveApiKey.IsEmpty())
+	{
+		HttpRequest->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *EffectiveApiKey));
+	}
 	HttpRequest->SetContentAsString(PayloadString);
+	HttpRequest->SetTimeout(1200.0f); // 20 minute timeout for large local models
+	HttpRequest->SetActivityTimeout(1200.0f); // Allow long idle time while model is thinking
 
-	//UE_LOG(LogGenAIVerbose, Log, TEXT("Sending chat request... Payload: %s"), *PayloadString);
+	UE_LOG(LogGenAI, Log, TEXT("Sending chat request to: %s  Payload: %s"), *Endpoint, *PayloadString);
 
 	HttpRequest->OnProcessRequestComplete().BindLambda(
 		[ResponseCallback](FHttpRequestPtr Request, const FHttpResponsePtr& Response, const bool bSuccess)
 		{
 			if (!bSuccess || !Response.IsValid())
 			{
-				ResponseCallback(TEXT(""), TEXT("Request failed"), false);
-				UE_LOG(LogGenAI, Error, TEXT("Request failed, Response code: %d"),
-				       Response.IsValid() ? Response->GetResponseCode() : -1);
+				const FString FailReason = Request.IsValid()
+					? FString::Printf(TEXT("Status: %d, URL: %s"),
+						Response.IsValid() ? Response->GetResponseCode() : -1,
+						*Request->GetURL())
+					: TEXT("Request invalid");
+				ResponseCallback(TEXT(""), FString::Printf(TEXT("Request failed: %s"), *FailReason), false);
+				UE_LOG(LogGenAI, Error, TEXT("Request failed: %s"), *FailReason);
 				return;
 			}
 			ProcessResponse(Response->GetContentAsString(), ResponseCallback);

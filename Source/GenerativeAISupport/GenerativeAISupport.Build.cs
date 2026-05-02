@@ -20,8 +20,7 @@ public class GenerativeAISupport : ModuleRules
 				"Engine",
 				"HTTP",
 				"Json",
-				"DeveloperSettings",
-				"ImageDownload"
+				"DeveloperSettings"
 			}
 		);
 

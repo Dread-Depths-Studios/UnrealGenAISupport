@@ -103,6 +103,14 @@ struct FGenChatSettings
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GenAI|OpenAI")
     TArray<FGenChatMessage> Messages;
+
+    /** Optional custom API endpoint (e.g. http://localhost:8080/v1/chat/completions for llama.cpp). If empty, uses OpenAI's API. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GenAI|OpenAI")
+    FString CustomEndpoint;
+
+    /** Optional API key for custom endpoints (OpenRouter, Together AI, etc.). If empty, uses the stored OpenAI key. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GenAI|OpenAI")
+    FString CustomApiKey;
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GenAI|OpenAI|GPT-5")
     EGenAIOpenAIReasoningEffort ReasoningEffort = EGenAIOpenAIReasoningEffort::Default;

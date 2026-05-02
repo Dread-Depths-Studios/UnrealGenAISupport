@@ -28,24 +28,6 @@ UE_LOG(LogGenPerformance, Display, TEXT("%s took: %f ms"), Description, ElapsedT
 #endif
 
 #include "CoreMinimal.h"
-#include "GenGlobalDefinitions.generated.h" // Include at the end
 
-// Disable logs by default
-USTRUCT()
-struct FLogInitializer
-{
-	GENERATED_BODY()
-	
-	FLogInitializer()
-	{
-		//DISABLE_LOG(LogGenAI);
-		//DISABLE_LOG(LogGenPerformance);
-		DISABLE_LOG(LogGenAIVerbose);
-
-		ENABLE_LOG(LogGenAI);
-		ENABLE_LOG(LogGenPerformance);
-		//ENABLE_LOG(LogGenAIVerbose);
-	}
-};
-
-static const FLogInitializer LogInitializer;
+// Log categories default to Log verbosity via DECLARE_LOG_CATEGORY_EXTERN above.
+// LogGenAIVerbose can be enabled at runtime with: Log LogGenAIVerbose Log
