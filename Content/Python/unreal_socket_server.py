@@ -199,28 +199,23 @@ def socket_server_thread():
                     command = json.loads(data_str)
                     log.log_info(f"Received command: {command}")
 
-                    # For handshake, we can respond directly from the thread
-                    if command.get("type") == "handshake":
-                        response = dispatcher.dispatch(command)
+                    # All commands queue to the main thread — UE APIs aren't thread-safe.
+                    command_id = command_counter
+                    command_counter += 1
+                    command_queue.append((command_id, command))
+
+                    # Wait for the response with a timeout
+                    timeout = 10  # seconds
+                    start_time = time.time()
+                    while command_id not in response_dict and time.time() - start_time < timeout:
+                        time.sleep(0.1)
+
+                    if command_id in response_dict:
+                        response = response_dict.pop(command_id)
                         conn.sendall(json.dumps(response).encode())
                     else:
-                        # For other commands, queue them for main thread execution
-                        command_id = command_counter
-                        command_counter += 1
-                        command_queue.append((command_id, command))
-
-                        # Wait for the response with a timeout
-                        timeout = 10  # seconds
-                        start_time = time.time()
-                        while command_id not in response_dict and time.time() - start_time < timeout:
-                            time.sleep(0.1)
-
-                        if command_id in response_dict:
-                            response = response_dict.pop(command_id)
-                            conn.sendall(json.dumps(response).encode())
-                        else:
-                            error_response = {"success": False, "error": "Command timed out"}
-                            conn.sendall(json.dumps(error_response).encode())
+                        error_response = {"success": False, "error": "Command timed out"}
+                        conn.sendall(json.dumps(error_response).encode())
                 except json.JSONDecodeError as json_err:
                     log.log_error(f"Error parsing JSON: {str(json_err)}", include_traceback=True)
                     error_response = {"success": False, "error": f"Invalid JSON: {str(json_err)}"}
