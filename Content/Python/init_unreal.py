@@ -55,8 +55,11 @@ def start_mcp_server():
         if sys.platform == 'win32':
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
 
+        # Launch in SSE mode so any MCP client (Claude Desktop, Cursor, Claude
+        # Code, curl, etc.) can connect via http://127.0.0.1:8000/sse without
+        # tying the server's lifetime to one client process.
         mcp_server_process = subprocess.Popen(
-            [python_exe, mcp_server_path],
+            [python_exe, mcp_server_path, "--sse"],
             creationflags=creationflags,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

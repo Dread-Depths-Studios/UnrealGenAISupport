@@ -45,8 +45,13 @@ pid_file = write_pid_file()
 if pid_file:
     print(f"MCP Server started with PID file at: {pid_file}", file=sys.stderr)
 
-# Create an MCP server
-mcp = FastMCP("UnrealHandshake")
+# Create an MCP server. Host/port can be overridden via env vars when running
+# in SSE mode (default 8000 collides with too many other tools — using 8765).
+# Default host is 0.0.0.0 so the server is reachable from any LAN client; flip
+# to 127.0.0.1 if you want localhost-only.
+_mcp_host = os.environ.get("UNREAL_MCP_HOST", "0.0.0.0")
+_mcp_port = int(os.environ.get("UNREAL_MCP_PORT", "8765"))
+mcp = FastMCP("UnrealHandshake", host=_mcp_host, port=_mcp_port)
 
 
 # Function to send a message to Unreal Engine via socket
@@ -1086,9 +1091,26 @@ def get_node_pins(blueprint_path: str, node_id: str) -> str:
 if __name__ == "__main__":
     import traceback
 
+    # Two transport modes:
+    #   stdio (default) — server is launched as a subprocess by an MCP client
+    #     (Claude Desktop, Cursor, Claude Code) and communicates via stdin/stdout.
+    #     One client per server instance.
+    #   sse  — server runs as a long-lived HTTP daemon on http://127.0.0.1:8000/sse.
+    #     Multiple MCP clients can connect simultaneously by URL. Survives any
+    #     individual client closing.
+    use_sse = "--sse" in sys.argv
+
     try:
-        print("Server starting...", file=sys.stderr)
-        mcp.run()
+        if use_sse:
+            print(f"MCP server starting in SSE mode at http://{_mcp_host}:{_mcp_port}/sse", file=sys.stderr)
+            if _mcp_host == "0.0.0.0":
+                print("  WARNING: bound to 0.0.0.0 — reachable from any host on the LAN.", file=sys.stderr)
+                print("           Anyone who can reach this port can drive your editor.", file=sys.stderr)
+                print("           Set UNREAL_MCP_HOST=127.0.0.1 if you want localhost only.", file=sys.stderr)
+            mcp.run(transport="sse")
+        else:
+            print("MCP server starting (stdio mode)...", file=sys.stderr)
+            mcp.run()
     except Exception as e:
         print(f"Server crashed with error: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
