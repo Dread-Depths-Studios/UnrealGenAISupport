@@ -616,10 +616,14 @@ def get_all_nodes_in_graph(blueprint_path: str, function_id: str) -> str:
     }
 
     response = send_to_unreal(command)
-    if response.get("success"):
-        return response.get("nodes", "[]")
-    else:
+    if not response.get("success"):
         return f"Failed to get nodes: {response.get('error', 'Unknown error')}"
+    # Handler returns a list of node dicts; serialize to a JSON string so the
+    # tool's `-> str` return type validates correctly under FastMCP/pydantic.
+    nodes = response.get("nodes", [])
+    if isinstance(nodes, str):
+        return nodes  # already serialized by the handler
+    return json.dumps(nodes, indent=2)
 
 
 @mcp.tool()
