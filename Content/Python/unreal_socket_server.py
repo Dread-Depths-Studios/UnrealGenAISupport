@@ -70,6 +70,11 @@ class CommandDispatcher:
             # --- NEW UI COMMANDS ---
             "add_widget_to_user_widget": ui_commands.handle_add_widget_to_user_widget,
             "edit_widget_property": ui_commands.handle_edit_widget_property,
+
+            # --- Phase 4.2 introspection (read-only) ---
+            "get_blueprint_outline": blueprint_commands.handle_get_blueprint_outline,
+            "get_node_pins": blueprint_commands.handle_get_node_pins,
+            "list_actors_by_class": actor_commands.handle_list_actors_by_class,
         }
 
     # Commands that don't mutate editor state — skip transaction wrapping so
@@ -82,6 +87,10 @@ class CommandDispatcher:
         "get_node_suggestions",
         "get_node_guid",
         "take_screenshot",  # writes a temp file but doesn't mutate editor state
+        # Phase 4.2 introspection
+        "get_blueprint_outline",
+        "get_node_pins",
+        "list_actors_by_class",
     })
 
     def dispatch(self, command: Dict[str, Any]) -> Dict[str, Any]:

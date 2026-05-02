@@ -204,3 +204,37 @@ def handle_create_game_mode(command: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(result)
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def handle_list_actors_by_class(command: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    List all actors in the current level whose class matches the given name.
+    Match is by simple name (`StaticMeshActor`) or full path (`/Script/Engine.StaticMeshActor`).
+    Read-only.
+    """
+    try:
+        class_name = command.get("class_name", "")
+        if not class_name:
+            return {"success": False, "error": "Missing class_name"}
+
+        editor_actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        all_actors = editor_actors.get_all_level_actors()
+
+        matching: List[Dict[str, Any]] = []
+        for actor in all_actors:
+            actor_class = actor.get_class()
+            cls_simple = actor_class.get_name()
+            cls_path = actor_class.get_path_name()
+            if cls_simple == class_name or cls_path == class_name:
+                loc = actor.get_actor_location()
+                matching.append({
+                    "name": actor.get_actor_label(),
+                    "class": cls_path,
+                    "location": [float(loc.x), float(loc.y), float(loc.z)],
+                })
+
+        return {"success": True, "actors": matching, "count": len(matching)}
+
+    except Exception as e:
+        log.log_error(f"Error in list_actors_by_class: {str(e)}", include_traceback=True)
+        return {"success": False, "error": str(e)}

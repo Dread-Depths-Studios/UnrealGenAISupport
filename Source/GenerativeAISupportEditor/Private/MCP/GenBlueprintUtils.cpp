@@ -1199,3 +1199,143 @@ FString UGenBlueprintUtils::AddComponentWithEvents(const FString& BlueprintPath,
     return FString::Printf(TEXT("{\"success\": true, \"message\": \"Added collision component %s with overlap events\", \"begin_overlap_guid\": \"%s\", \"end_overlap_guid\": \"%s\"}"),
                            *ComponentName, *BeginOverlapEvent->NodeGuid.ToString(), *EndOverlapEvent->NodeGuid.ToString());
 }
+
+FString UGenBlueprintUtils::GetBlueprintOutline(const FString& BlueprintPath)
+{
+    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
+    if (!Blueprint)
+    {
+        return TEXT("{\"success\": false, \"error\": \"Could not load blueprint\"}");
+    }
+
+    TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+    Root->SetBoolField(TEXT("success"), true);
+
+    TArray<TSharedPtr<FJsonValue>> Components;
+    if (USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript)
+    {
+        for (USCS_Node* Node : SCS->GetAllNodes())
+        {
+            TSharedPtr<FJsonObject> Comp = MakeShared<FJsonObject>();
+            Comp->SetStringField(TEXT("name"), Node->GetVariableName().ToString());
+            if (Node->ComponentTemplate)
+            {
+                Comp->SetStringField(TEXT("class"), Node->ComponentTemplate->GetClass()->GetPathName());
+            }
+            Components.Add(MakeShared<FJsonValueObject>(Comp));
+        }
+    }
+    Root->SetArrayField(TEXT("components"), Components);
+
+    TArray<TSharedPtr<FJsonValue>> Variables;
+    for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+    {
+        TSharedPtr<FJsonObject> V = MakeShared<FJsonObject>();
+        V->SetStringField(TEXT("name"), Var.VarName.ToString());
+        V->SetStringField(TEXT("type"), Var.VarType.PinCategory.ToString());
+        Variables.Add(MakeShared<FJsonValueObject>(V));
+    }
+    Root->SetArrayField(TEXT("variables"), Variables);
+
+    TArray<TSharedPtr<FJsonValue>> Functions;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        if (!Graph) continue;
+        TSharedPtr<FJsonObject> F = MakeShared<FJsonObject>();
+        F->SetStringField(TEXT("name"), Graph->GetName());
+        Functions.Add(MakeShared<FJsonValueObject>(F));
+    }
+    Root->SetArrayField(TEXT("functions"), Functions);
+
+    TArray<TSharedPtr<FJsonValue>> EventNodes;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (!Graph) continue;
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node) continue;
+            TSharedPtr<FJsonObject> N = MakeShared<FJsonObject>();
+            N->SetStringField(TEXT("type"), Node->GetClass()->GetName());
+            N->SetStringField(TEXT("guid"), Node->NodeGuid.ToString());
+            TArray<TSharedPtr<FJsonValue>> Pos;
+            Pos.Add(MakeShared<FJsonValueNumber>(Node->NodePosX));
+            Pos.Add(MakeShared<FJsonValueNumber>(Node->NodePosY));
+            N->SetArrayField(TEXT("position"), Pos);
+            EventNodes.Add(MakeShared<FJsonValueObject>(N));
+        }
+    }
+    Root->SetArrayField(TEXT("event_graph_nodes"), EventNodes);
+
+    FString Output;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+    return Output;
+}
+
+FString UGenBlueprintUtils::GetNodePins(const FString& BlueprintPath, const FString& NodeGuid)
+{
+    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
+    if (!Blueprint)
+    {
+        return TEXT("{\"success\": false, \"error\": \"Could not load blueprint\"}");
+    }
+
+    FGuid TargetGuid;
+    if (!FGuid::Parse(NodeGuid, TargetGuid))
+    {
+        return FString::Printf(TEXT("{\"success\": false, \"error\": \"Invalid GUID: %s\"}"), *NodeGuid);
+    }
+
+    UEdGraphNode* TargetNode = nullptr;
+    auto SearchGraphs = [&](const TArray<TObjectPtr<UEdGraph>>& Graphs)
+    {
+        for (UEdGraph* Graph : Graphs)
+        {
+            if (!Graph) continue;
+            for (UEdGraphNode* Node : Graph->Nodes)
+            {
+                if (Node && Node->NodeGuid == TargetGuid)
+                {
+                    TargetNode = Node;
+                    return;
+                }
+            }
+        }
+    };
+    SearchGraphs(Blueprint->UbergraphPages);
+    if (!TargetNode) SearchGraphs(Blueprint->FunctionGraphs);
+
+    if (!TargetNode)
+    {
+        return FString::Printf(TEXT("{\"success\": false, \"error\": \"Node %s not found\"}"), *NodeGuid);
+    }
+
+    TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+    Root->SetBoolField(TEXT("success"), true);
+    Root->SetStringField(TEXT("node_type"), TargetNode->GetClass()->GetName());
+
+    TArray<TSharedPtr<FJsonValue>> InputPins;
+    TArray<TSharedPtr<FJsonValue>> OutputPins;
+    for (UEdGraphPin* Pin : TargetNode->Pins)
+    {
+        if (!Pin) continue;
+        TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+        P->SetStringField(TEXT("name"), Pin->PinName.ToString());
+        P->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+        if (Pin->Direction == EGPD_Input)
+        {
+            InputPins.Add(MakeShared<FJsonValueObject>(P));
+        }
+        else
+        {
+            OutputPins.Add(MakeShared<FJsonValueObject>(P));
+        }
+    }
+    Root->SetArrayField(TEXT("input_pins"), InputPins);
+    Root->SetArrayField(TEXT("output_pins"), OutputPins);
+
+    FString Output;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+    return Output;
+}

@@ -131,6 +131,19 @@ public:
 	static FString AddComponentWithEvents(const FString& BlueprintPath, const FString& ComponentName,
 	                               const FString& ComponentClassName);
 
+	/**
+	 * Read-only: enumerate components, variables, functions, and event-graph
+	 * nodes on a Blueprint. Returns JSON.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Generative AI|Blueprint Utils")
+	static FString GetBlueprintOutline(const FString& BlueprintPath);
+
+	/**
+	 * Read-only: list input/output pins on a node by GUID. Returns JSON.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Generative AI|Blueprint Utils")
+	static FString GetNodePins(const FString& BlueprintPath, const FString& NodeGuid);
+
 private:
 	// Helper functions for internal use
 	static UBlueprint* LoadBlueprintAsset(const FString& BlueprintPath);

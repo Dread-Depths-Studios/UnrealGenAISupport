@@ -625,3 +625,41 @@ def handle_get_node_guid(command: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         log.log_error(f"Error getting node GUID: {str(e)}", include_traceback=True)
         return {"success": False, "error": str(e)}
+
+
+def handle_get_blueprint_outline(command: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return the structure of a Blueprint: components, variables, functions,
+    and event-graph nodes. Delegates to the C++ utility because UE 5.7's
+    Python binding does not expose UbergraphPages/FunctionGraphs/etc.
+    """
+    try:
+        blueprint_path = command.get("blueprint_path", "")
+        if not blueprint_path:
+            return {"success": False, "error": "Missing blueprint_path"}
+
+        result_json = unreal.GenBlueprintUtils.get_blueprint_outline(blueprint_path)
+        return json.loads(result_json)
+
+    except Exception as e:
+        log.log_error(f"Error in get_blueprint_outline: {str(e)}", include_traceback=True)
+        return {"success": False, "error": str(e)}
+
+
+def handle_get_node_pins(command: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return input/output pins on a specific node by GUID. Delegates to the
+    C++ utility — UEdGraphPin isn't a UObject and isn't iterable from Python.
+    """
+    try:
+        blueprint_path = command.get("blueprint_path", "")
+        node_id = command.get("node_id", "")
+        if not blueprint_path or not node_id:
+            return {"success": False, "error": "Missing blueprint_path or node_id"}
+
+        result_json = unreal.GenBlueprintUtils.get_node_pins(blueprint_path, node_id)
+        return json.loads(result_json)
+
+    except Exception as e:
+        log.log_error(f"Error in get_node_pins: {str(e)}", include_traceback=True)
+        return {"success": False, "error": str(e)}

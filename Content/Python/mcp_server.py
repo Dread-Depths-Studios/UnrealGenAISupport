@@ -699,66 +699,41 @@ def spawn_blueprint_actor(blueprint_path: str, location: list = [0, 0, 0],
         return f"Failed to spawn Blueprint: {response.get('error', 'Unknown error')}"
 
 
-# @mcp.tool()
-# def add_nodes_to_blueprint_bulk(blueprint_path: str, function_id: str, nodes: list) -> str:
-#     """
-#     Add multiple nodes to a Blueprint graph in a single operation
-# 
-#     Args:
-#         blueprint_path: Path to the Blueprint asset
-#         function_id: ID of the function to add the nodes to
-#         nodes: Array of node definitions, each containing:
-#             - id: ID for referencing the node (string) - this is important for creating connections later
-#             - node_type: Type of node to add (see add_node_to_blueprint for supported types)
-#             - node_position: Position of the node in the graph [X, Y]
-#             - node_properties: Properties to set on the node (optional)
-# 
-#     Returns:
-#         On success: Dictionary mapping your node IDs to the actual node GUIDs created in Unreal
-#         On partial success: Dictionary with successful nodes and suggestions for failed nodes
-#         On failure: Error message with suggestions
-# 
-#     Example success response:
-#         {
-#           "success": true,
-#           "nodes": {
-#             "function_entry": "425E7A3949D7420A461175A4733BBA5C",
-#             "multiply_node": "70354A7E444BB68EEF31718DC50CF89C",
-#             "return_node": "6436796645ED674F3C64A8A94CBA416C"
-#           }
-#         }
-# 
-#     Example partial success with suggestions:
-#         {
-#           "success": true,
-#           "partial_success": true,
-#           "nodes": {
-#             "function_entry": "425E7A3949D7420A461175A4733BBA5C",
-#             "return_node": "6436796645ED674F3C64A8A94CBA416C"
-#           },
-#           "suggestions": {
-#             "multiply_node": {
-#               "requested_type": "Multiply_Float",
-#               "suggestions": ["KismetMathLibrary.Multiply_FloatFloat", "KismetMathLibrary.MultiplyByFloat"]
-#             }
-#           }
-#         }
-# 
-#     When you receive suggestions, you can retry adding those nodes using the suggested node types.
-#     """
-#     command = {
-#         "type": "add_nodes_bulk",
-#         "blueprint_path": blueprint_path,
-#         "function_id": function_id,
-#         "nodes": nodes
-#     }
-# 
-#     response = send_to_unreal(command)
-#     if response.get("success"):
-#         node_mapping = response.get("nodes", {})
-#         return f"Successfully added {len(node_mapping)} nodes to function {function_id} in Blueprint at {blueprint_path}\nNode mapping: {json.dumps(node_mapping, indent=2)}"
-#     else:
-#         return f"Failed to add nodes: {response.get('error', 'Unknown error')}"
+@mcp.tool()
+def add_nodes_to_blueprint_bulk(blueprint_path: str, function_id: str, nodes: list) -> str:
+    """
+    Add multiple nodes to a Blueprint function graph in a single round-trip.
+
+    Args:
+        blueprint_path: Path to the Blueprint asset.
+        function_id: ID of the function to add the nodes to (from `add_function_to_blueprint`).
+        nodes: Array of node definitions, each containing:
+            - id: Reference ID for the node (string). Use this when you later
+                  need to wire connections via `connect_blueprint_nodes_bulk`.
+            - node_type: Type of node to add (see `add_node_to_blueprint` for supported types).
+            - node_position: Position [X, Y] in the graph. Space ≥400 horizontal / ≥300 vertical
+                  to keep the graph readable.
+            - node_properties: Optional dict of properties to set on the node.
+
+    Returns:
+        Success: human-readable line plus a JSON mapping of your reference IDs to
+        actual node GUIDs. Use those GUIDs with `connect_blueprint_nodes_bulk`.
+        Failure: error message.
+    """
+    command = {
+        "type": "add_nodes_bulk",
+        "blueprint_path": blueprint_path,
+        "function_id": function_id,
+        "nodes": nodes,
+    }
+    response = send_to_unreal(command)
+    if response.get("success"):
+        node_mapping = response.get("nodes", {})
+        return (
+            f"Successfully added {len(node_mapping)} nodes to function {function_id} "
+            f"in Blueprint at {blueprint_path}\nNode mapping: {json.dumps(node_mapping, indent=2)}"
+        )
+    return f"Failed to add nodes: {response.get('error', 'Unknown error')}"
 
 @mcp.tool()
 def add_component_with_events(blueprint_path: str, component_name: str, component_class: str) -> str:
@@ -950,7 +925,8 @@ def add_widget_to_user_widget(user_widget_path: str, widget_type: str, widget_na
         parent_widget_name: Optional. The name of an existing Panel widget (like CanvasPanel, VerticalBox) inside the User Widget to attach this new widget to. If empty, attempts to attach to the root or the first available CanvasPanel.
 
     Returns:
-        JSON string indicating success (with actual widget name) or failure with an error message.
+        Status string — success message including the actual assigned widget name,
+        or "Failed to add widget: ..." on error.
     """
     command = {
         "type": "add_widget_to_user_widget",
@@ -993,7 +969,7 @@ def edit_widget_property(user_widget_path: str, widget_name: str, property_name:
             - Enum (e.g., Stretch): 'ScaleToFit'
 
     Returns:
-        JSON string indicating success or failure with an error message.
+        Status string — success message or "Failed to edit widget property: ..." on error.
     """
     command = {
         "type": "edit_widget_property",
@@ -1025,6 +1001,86 @@ def add_input_binding(action_name: str, key: str) -> str:
     command = {"type": "add_input_binding", "action_name": action_name, "key": key}
     response = send_to_unreal(command)
     return response.get("message", f"Failed: {response.get('error')}")
+
+
+# --- Phase 4.2 introspection tools ---
+
+@mcp.tool()
+def get_blueprint_outline(blueprint_path: str) -> str:
+    """
+    Read the structure of a Blueprint without modifying it: components,
+    variables, functions, and event-graph nodes.
+
+    Use this to understand a Blueprint's shape before mutating it. Helps avoid
+    name collisions on `add_*` calls and lets you target existing nodes by GUID.
+
+    Args:
+        blueprint_path: Path to the Blueprint asset (e.g., "/Game/Blueprints/BP_Pickup").
+
+    Returns:
+        JSON string with keys: components, variables, functions, event_graph_nodes.
+        Each is a list of dicts with names/types/GUIDs/positions where relevant.
+    """
+    response = send_to_unreal({"type": "get_blueprint_outline", "blueprint_path": blueprint_path})
+    if not response.get("success"):
+        return f"Failed: {response.get('error', 'Unknown error')}"
+    # Drop the success flag from the user-facing payload.
+    payload = {k: v for k, v in response.items() if k != "success"}
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def list_actors_by_class(class_name: str) -> str:
+    """
+    List all actors in the current level whose class matches `class_name`.
+
+    Args:
+        class_name: Simple class name ("StaticMeshActor", "PointLight") or full
+                    path ("/Script/Engine.StaticMeshActor"). Exact match — does
+                    not include subclasses.
+
+    Returns:
+        JSON list of {"name", "class", "location"} for each match, plus a count.
+    """
+    response = send_to_unreal({"type": "list_actors_by_class", "class_name": class_name})
+    if not response.get("success"):
+        return f"Failed: {response.get('error', 'Unknown error')}"
+    return json.dumps(
+        {"count": response.get("count", 0), "actors": response.get("actors", [])},
+        indent=2,
+    )
+
+
+@mcp.tool()
+def get_node_pins(blueprint_path: str, node_id: str) -> str:
+    """
+    Return input and output pins on a specific Blueprint node.
+
+    Use this to plan `connect_blueprint_nodes` calls without trial-and-error
+    on pin names. The same info is returned by `connect_blueprint_nodes` only
+    on connection failure; this tool surfaces it preemptively.
+
+    Args:
+        blueprint_path: Path to the Blueprint asset.
+        node_id: GUID of the node (from `add_node_to_blueprint`,
+                 `add_nodes_bulk`, or `get_blueprint_node_guid`).
+
+    Returns:
+        JSON with node_type, input_pins (list of {name, type}), and
+        output_pins (list of {name, type}).
+    """
+    response = send_to_unreal({
+        "type": "get_node_pins",
+        "blueprint_path": blueprint_path,
+        "node_id": node_id,
+    })
+    if not response.get("success"):
+        return f"Failed: {response.get('error', 'Unknown error')}"
+    return json.dumps({
+        "node_type": response.get("node_type"),
+        "input_pins": response.get("input_pins", []),
+        "output_pins": response.get("output_pins", []),
+    }, indent=2)
 
 
 if __name__ == "__main__":
