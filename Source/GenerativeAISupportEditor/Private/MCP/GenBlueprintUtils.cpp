@@ -138,10 +138,12 @@ bool UGenBlueprintUtils::AddComponent(const FString& BlueprintPath, const FStrin
 	FKismetEditorUtilities::FAddComponentsToBlueprintParams Params;
 	FKismetEditorUtilities::AddComponentsToBlueprint(Blueprint, Components, Params);
 
-	// Mark the blueprint as modified
+	// Mark the blueprint structurally modified so the SCS additions actually
+	// propagate to GeneratedClass on the next compile. Without this, the SCS
+	// has the new component but a spawned actor instantiates without it
+	// (Case A bug found via BP_AmmoCrate, 2026-05-03).
 	Blueprint->Modify();
-
-	// Compile the blueprint
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
 	// Open the Blueprint editor
