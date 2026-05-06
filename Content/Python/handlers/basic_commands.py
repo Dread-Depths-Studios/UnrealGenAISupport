@@ -94,10 +94,25 @@ def handle_take_screenshot(command):
     try:
         console_command = f'HighResShot 1 filename="{screenshot_path}"'
         unreal.log(f"Executing screenshot command: {console_command}")
-        unreal.SystemLibrary.execute_console_command(
-            unreal.EditorLevelLibrary.get_editor_world(),
-            console_command,
-        )
+        # UE 5.5+: EditorLevelLibrary is deprecated; UnrealEditorSubsystem
+        # is the supported way to get the editor world. Falling back to
+        # the legacy API only if the subsystem isn't available (older UE).
+        world = None
+        try:
+            ue_subsys = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
+            if ue_subsys:
+                world = ue_subsys.get_editor_world()
+        except Exception:
+            world = None
+        if world is None and hasattr(unreal, "EditorLevelLibrary"):
+            world = unreal.EditorLevelLibrary.get_editor_world()
+        if world is None:
+            return {
+                "success": False,
+                "error": "Could not resolve editor world for HighResShot — "
+                         "tried UnrealEditorSubsystem and EditorLevelLibrary.",
+            }
+        unreal.SystemLibrary.execute_console_command(world, console_command)
         return {
             "success": True,
             "expected_path": screenshot_path,

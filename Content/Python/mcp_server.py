@@ -374,7 +374,8 @@ def take_editor_screenshot() -> Image:
     if not expected_path:
         return "Screenshot tool did not return a file path."
 
-    deadline = time.time() + 10
+    timeout_s = 20
+    deadline = time.time() + timeout_s
     while time.time() < deadline:
         if os.path.exists(expected_path):
             try:
@@ -391,7 +392,7 @@ def take_editor_screenshot() -> Image:
                 return Image(data=image_bytes, format="png")
         time.sleep(0.1)
 
-    return f"Screenshot timed out — file did not appear at {expected_path} within 10s"
+    return f"Screenshot timed out — file did not appear at {expected_path} within {timeout_s}s"
 
 
 @mcp.tool()
